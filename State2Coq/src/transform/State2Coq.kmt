@@ -12,7 +12,7 @@ package state;
 require "http://state/1.0"
 require "platform:/resource/State2Coq/src/interpretor/GuardInterpretor.kmt"
 require kermeta
- 
+   
 using kermeta::standard
 using kermeta::persistence
 using kermeta::io
@@ -33,19 +33,21 @@ aspect class StateModel{
 		
 		//初始化工作，设置顶层顶点深度为0，然后设置所有顶点深度
 		self.packagedElment.asType(StateMachine).region.one.subVertex.each{e | e.initialize()}
+		//初始化guard的编号。
 	    self.packagedElment.asType(StateMachine).region.one.initializeFlag(0)
 	    self.packagedElment.asType(StateMachine).region.one.subVertex.each{e | e.setVertexDeep()}
 	   
 	    //获得transitionList和GuardList 
 	    self.packagedElment.asType(StateMachine).region.one.getTransList(transitionList)
         //获得stateList
-	    self.packagedElment.asType(StateMachine).region.one.subVertex.each{e |
-	     e.toCoq(transitionList,stateList)} 
-	     
+	   // self.packagedElment.asType(StateMachine).region.one.subVertex.each{e |
+	  //   e.toCoq(transitionList,stateList)} 
+	          self.packagedElment.asType(StateMachine).region.one.subVertex.one.asType(Vertex).toCoq(transitionList,stateList)
+	    
 	    //调整工作，设置state的id，设置子状态列表中状态的id、guard的id
 	    //并同时设置transitionList中的源和目的状态在stateList中的相应id
         self.setStateID(stateList)
-        self.setGuardID(transitionList)
+        self.setGuardID(transitionList)   
         self.setStateIDInTransList(transitionList,stateList)
         self.setSubStates(stateList)
    		        
@@ -78,7 +80,7 @@ aspect class StateModel{
 	        s.subStates.addAll(subStrSet)
 	        subStrSet.clear()
 	     }
-	     //获得子状态的Coq形式
+	     //获得子状态的Coq形式 
 	     stateList.each{s |
 	     		if(s.subStates.size() > 0)then
 	     			subStatesNum := s.subStates.size()
@@ -105,17 +107,30 @@ aspect class StateModel{
 	     }
 	end
 	
+	//获得迁移所在的或状态
+	 operation getTransContainer_OrState(trans :String) : StateStruct is do 
+	 	 var or_state:StateStruct init StateStruct.new
+	 	stateList.each{s|
+	 		if(s.type.equals("or"))then
+	 			if(s.subTransiton.contains(trans))then
+	 				or_state := s
+	 			end
+			end
+		}
+		result := or_state
+	 end	
+
+	
+	
 	//利用stateList设置transList的源、目的状态的ID
-	operation  setStateIDInTransList(transList : oset TransitionStruct[0..*], stateList : oset StateStruct[0..*]) is do
+	operation  setStateIDInTransList(transList : oset TransitionStruct[0..*], stateList : oset StateStruct[0..*]) is do		
+		var trans_container : StateStruct init StateStruct.new
 		transList.each{trans |
-				stateList.each{s |
-				    if(trans.sState.name == s.name) then
-				    	 trans.sStateID := s.ID 
-				    end
-				    if(trans.tState.name == s.name) then
-				    	 trans.tStateID := s.ID
-				    end
-				}
+		  //获取包含该迁移的or状态。
+			trans_container := getTransContainer_OrState(trans.tName)
+			//根据trans的源和目标状态在or状态的子状态列表中的位置来确定源和目标状态的编号
+			trans.sStateID := trans_container.subStates.indexOf(trans.sState.name)
+			trans.tStateID := trans_container.subStates.indexOf(trans.tState.name)
 		}	
 	end
 	
@@ -162,7 +177,6 @@ aspect class StateModel{
 	    			   end
 	    		 end
 	        end
-	   
 	    }
   		 result := currentState
 	end 
@@ -175,7 +189,7 @@ aspect class StateModel{
 	 	   //为-1时不需要定义
 	 	    if(e.guardID != -1) then
 	 	       //stdio.writeln("guard: " + e.guard)
-	 	 		currentGuardRes := currentGuardRes + "Definition " + "g" + e.guardID.toString() + " : guard := " + cal.initialize(e.guard)+ ".\n" 
+	 	 		currentGuardRes := currentGuardRes + "Definition " + "g" + e.guardID.toString() + " : guard := " + cal.initialize(e.guard)+ "\n" 
 	 	 	end
 	 	 }
 	 	 result := currentGuardRes 
@@ -184,7 +198,7 @@ aspect class StateModel{
 	//利用生成的transList，最终生成trans的代码
 	operation trans2Coq(transList : oset TransitionStruct[0..*]) : String is do 	
  	     result := ""	
- 	     var currentTransList : String init "" 	 
+ 	     var currentTransList : String init "" 	  
  	     transList.each{trans |
  	     var guard : String
  	     if(trans.guardID == -1) then
@@ -216,7 +230,7 @@ class StateStruct
 */
 class TransitionStruct{
         attribute tName : String
-        attribute sStateID : Integer
+        attribute sStateID : Integer //迁移所在状态的
         reference sState : Vertex
         attribute sr : String  //源决定因子
         attribute event : String
@@ -228,7 +242,7 @@ class TransitionStruct{
         attribute ht : String
         attribute type : Integer//用来判断是否是同层之间的转换，0表示同层，1表示非同层
         reference parentState : Vertex //用来记录sState和tState共同的父状态
-        attribute guardID : Integer
+        attribute guardID : Integer //卫士条件的ID
 } 
 
 aspect class Region{
@@ -307,7 +321,7 @@ aspect class Transition{
 	 	 trans.action := if(not self.effect.isVoid()) then "\"" + self.effect.body + "\"" + " :: nil"
 	 	  				else "nil"
 	 	  				end
-	 	 trans.sState := self.source
+	 	 trans.sState := self.source 
 	 	 trans.sr := "nil"
 	 	 trans.tr := "nil"
 		 //如果当前迁移的target状态为伪历史状态，则ht不为空，且tState为历史状态的父状态
@@ -326,14 +340,14 @@ aspect class Transition{
 	     end
 		 result := trans
    	 end
-    operation setGuard(str : String) : String is do 
-    		result := ""
-    end
+
 	//当迁移不在同一层时，需要改变sr和tr
 	operation changeTrans(trans : TransitionStruct) : TransitionStruct is do
  		 var sState : Vertex init trans.sState
 	  	 var tState : Vertex init trans.tState
 	 	 var currencTrans : String init ""
+	 	 var srString :String init ""
+	 	 var trString :String init ""
 	 	 //源目标决定因子
 	 	 var sr : oset String[0..*] init kermeta::standard::OrderedSet<String>.new
 	 	 var tr : oset String[0..*] init kermeta::standard::OrderedSet<String>.new
@@ -353,6 +367,7 @@ aspect class Transition{
 	  	     			tState := tState.container().asType(Region).container().asType(Vertex)
 		  			 end
 	  	    		//直到sState和tState的父状态相同，即所属区域相同
+	  	    		tr.addAt(0,tState.name)
 	  			 else
 	  	   			from  true
 	  		 		until sState.vertexDeep == tState.vertexDeep
@@ -360,9 +375,12 @@ aspect class Transition{
 	  	      			sr.add(sState.name)
 	  	     			sState := sState.container().asType(Region).container().asType(Vertex)
 		  			 end
+		  			  //新加入的一行，最顶层的那个状态也要加入sr和tr
+		  			  sr.addAt(0,sState.name)
 	  			 end
 	  	 end
-
+		
+	  	 
 	  	 trans.tState := tState
 	  	 trans.sState := sState
 	  	 var size : Integer init tr.size()
@@ -440,7 +458,7 @@ aspect class Vertex{
      operation toCoq(transList : oset TransitionStruct[0..*], stateList:oset StateStruct[0..*]) is do
 		 var stateType : String 
 	     if(self.isInstanceOf(State))then
-			 stateType := self.typeDetect()	    
+			 stateType := self.typeDetect()	    //可以改成多态的形式， 构造一个辅助类，Trans 有3个子类，实现Trans的toCoq方法。
 	         // 三种非伪状态的state的处理
 	    	 if(stateType == "basic_state") then
 	    		 basic_State2Coq(stateList)
@@ -500,8 +518,6 @@ aspect class Vertex{
 	 	 var subTrans : String init ""//子状态迁移的集合
 	 	 //获得入口出口动作
 	 	 entryExit := getEntryExitAction()
-	 	 //子状态列表的生成
-	 	 //subStates := getSubStatesList() 
 	 	 //子状态迁移列表生成
 	 	 subTrans := getSubTransition(transList)
 	 	 //子状态调用toCoq方法进行转换
@@ -517,6 +533,7 @@ aspect class Vertex{
 	 	 state.name := self.name
 	 	 state.type := "or"
 	 	 state.entryExit := entryExit
+	 	 //子状态列表的生成	 	 
   	     getSubStatesList(state.subStates)
 	 	 state.subTransiton := subTrans
 	 	 stateList.add(state)
@@ -529,7 +546,6 @@ aspect class Vertex{
 	
 	 	 //stdio.writeln("Transform AND_state"+ self.name)
 	 	 var state:StateStruct init StateStruct.new	
-	 	 var currentState : String init ""
 	 	 var entryExit : String
 	 	 var subStates : String init ""
 	 	 
@@ -666,7 +682,7 @@ aspect class Vertex{
 	 	 }
 	 	 result := num	 	 
 	 end
-	 
+	  
 	 /*
 	  * 检测一个State类型的subVertex（即state）包含的region的数目，从而判断出state的类型。FinalState类的state也被当作一个basic_state
 	 */
@@ -676,7 +692,7 @@ aspect class Vertex{
 	     //stdio.writeln("detect state: " + self.name)
 	     regionNum := self.asType(State).region.size
 	     //stdio.writeln("regionNum :" + regionNum.toString())
-	     
+	      
 	     if(self.isKindOf(FinalState)) then
 	     	 result := "basic_state"
 	     end
@@ -691,3 +707,4 @@ aspect class Vertex{
 	     end
 	 end 
 }
+
